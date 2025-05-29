@@ -148,10 +148,10 @@ async function submitToGoogleForm(selectedLabels, selectedTags, env) {
     // 根据你的Google Form字段名称来设置这些entry值
     // 你需要替换这些entry ID为你实际的Google Form字段ID
     formData.append('entry.218313468', beijingTime.toISOString()); // 时间戳字段
-    formData.append('entry.89095521', selectedLabels.join(', ')); // 选中标签字段
-    formData.append('entry.1356066148', selectedTags.join('，')); // 评价文本字段
-    formData.append('entry.1273374526', beijingTime.toISOString().split('T')[0]); // 日期字段
-    formData.append('entry.1493587175', beijingTime.toTimeString().split(' ')[0]); // 时间字段
+    formData.append('entry.1273374526', selectedLabels.join(', ')); // 选中标签字段
+    formData.append('entry.1493587175', selectedTags.join('，')); // 评价文本字段
+    formData.append('entry.89095521', beijingTime.toISOString().split('T')[0]); // 日期字段
+    formData.append('entry.1356066148', beijingTime.toTimeString().split(' ')[0]); // 时间字段
     
     // 添加分类统计
     const categories = categorizeLabels(selectedLabels);
