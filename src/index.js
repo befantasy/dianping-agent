@@ -59,7 +59,7 @@ export default {
         });
 
       } catch (error) {
-        console.error('处理错误:', error);
+        console.error('AI处理错误:', error);
         return new Response(JSON.stringify({
           error: 'AI服务暂时不可用',
           details: error.message
