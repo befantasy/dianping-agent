@@ -1,4 +1,4 @@
-name = "polish-review-worker"
+name = "dianping-agent-worker"
 compatibility_date = "2025-05-01"
 
 [vars]
