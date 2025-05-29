@@ -1,8 +1,6 @@
 name = "dianping-agent"
 compatibility_date = "2025-05-29"
 main = "src/index.js"
-format = "modules"
-
 
 [vars]
 # 你可以在这里添加自定义环境变量
