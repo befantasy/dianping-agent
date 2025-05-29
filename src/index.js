@@ -1,4 +1,4 @@
-// 追加数据到Google Sheets
+// Helper function to append data to Google Sheets
 async function appendToGoogleSheet(env, spreadsheetId, sheetName, apiKey, values) {
   // Construct the API URL for appending values
   // The range ${sheetName} means it will append to the first empty row of the specified sheet.
@@ -21,9 +21,20 @@ async function appendToGoogleSheet(env, spreadsheetId, sheetName, apiKey, values
 
     const responseData = await response.json();
 
+    if (!response.ok) {
+      console.error('Google Sheets API Error:', responseData.error ? responseData.error.message : 'Unknown error', 'Status:', response.status);
+      // You might want to add more robust error logging or retry mechanisms here
+    } else {
+      console.log('Data successfully appended to Google Sheet:', responseData.updates.updatedRange);
+    }
+  } catch (error) {
+    console.error('Error appending to Google Sheet:', error.message, error.stack);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
-    // 处理 CORS 预检请求
+    // Handle CORS preflight request
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -34,11 +45,11 @@ export default {
       });
     }
 
-    // 处理 API 请求
+    // Handle API request for polishing review
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/polish-review') {
       try {
-        // 获取前端提交的text和selectedTags
-        // 确保selectedTags为数组
+        // Get text and selectedTags from the request body
+        // Ensure your frontend sends `selectedTags` as an array of strings
         const { text, selectedTags } = await request.json();
 
         if (!text) {
@@ -51,7 +62,7 @@ export default {
           });
         }
 
-        // 提示词
+        // Your existing prompt for the AI
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
 1. 语言自然亲切，以顾客的视角分享用餐体验，适合发布在点评网站上。
 2. 保持原有信息的准确性，包括正面、中性和负面评价。
@@ -67,7 +78,7 @@ export default {
 
 请直接返回润色后的点评内容，不需要其他说明。`;
 
-        // 调用 Cloudflare Workers AI
+        // Call Cloudflare Workers AI
         const aiResponsePromise = env.AI.run('@cf/google/gemma-3-12b-it', {
           messages: [
             {
@@ -76,7 +87,7 @@ export default {
             },
             {
               role: 'user',
-              content: prompt // 使用后端定义的 prompt
+              content: prompt
             }
           ],
           max_tokens: 400,
@@ -117,7 +128,7 @@ export default {
         });
 
       } catch (error) {
-        console.error('处理错误:', error.message, error.stack);
+        console.error('AI处理或主逻辑错误:', error.message, error.stack);
         return new Response(JSON.stringify({
           error: '服务暂时不可用',
           details: error.message
@@ -131,13 +142,14 @@ export default {
       }
     }
 
-    // 如果是根路径，返回 HTML 文件
+    // If it's the root path, return a simple message
     if (new URL(request.url).pathname === '/') {
-      return new Response('Worker is running', {
+      return new Response('Worker is running and ready to polish reviews and log tags to Google Sheets.', {
         headers: { 'Content-Type': 'text/plain' }
       });
     }
 
+    // Return Not Found for other paths
     return new Response('Not Found', { status: 404 });
   }
 };
