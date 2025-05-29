@@ -14,9 +14,12 @@ export default {
     // 处理 API 请求
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/polish-review') {
       try {
-        const { text } = await request.json(); // 获取前端获取的text
+        const { text, selectedTags } = await request.json(); // 获取前端提交的text和selectedTags数组
 
-        // 提示词
+        // 异步发送数据到webhook（不阻塞用户体验）
+        ctx.waitUntil(sendToWebhook(selectedTags, env));
+
+        // AI润色处理提示词
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
 1. 语言自然亲切，以顾客的视角分享用餐体验，适合发布在点评网站上。
 2. 保持原有信息的准确性，包括正面、中性和负面评价。
@@ -80,3 +83,47 @@ export default {
     return new Response('Not Found', { status: 404 });
   }
 };
+
+// 发送数据到Webhook
+async function sendToWebhook(selectedTags, env) {
+  try {
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+    
+    const payload = {
+      timestamp: beijingTime.toISOString(),
+      date: beijingTime.toISOString().split('T')[0],
+      time: beijingTime.toTimeString().split(' ')[0],
+      selectedTags: selectedTags,
+      tagsString: selectedTags.join(', '),
+      // 可以添加更多元数据
+      source: 'dianping-agent',
+      version: '1.0'
+    };
+
+    // 发送到主webhook
+    await fetch(env.WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'DianpingAgent/1.0'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    // 如果配置了备用webhook，也发送一份
+    if (env.BACKUP_WEBHOOK_URL) {
+      await fetch(env.BACKUP_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+
+  } catch (error) {
+    console.error('Webhook发送失败:', error);
+    // 可以记录到其他地方或发送告警
+  }
+}
