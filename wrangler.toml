@@ -3,6 +3,8 @@ compatibility_date = "2025-05-29"
 main = "src/index.js"
 
 [vars]
+WEBHOOK_URL = 
+BACKUP_WEBHOOK_URL =   # 可选
 # 你可以在这里添加自定义环境变量
 
 [ai]
