@@ -72,7 +72,7 @@ export default {
         });
       }
     }
-    
+
     // 如果是根路径，返回 HTML 文件
     if (new URL(request.url).pathname === '/') {
       return new Response('Worker is running', {
