@@ -16,8 +16,11 @@ export default {
       try {
         const { text, selectedTags, selectedLabels } = await request.json(); // 获取前端提交的text和selectedTags、selectedLabels数组
 
-        // 异步发送数据到webhook（不阻塞用户体验）
-        ctx.waitUntil(sendToWebhook(selectedLabels, env));
+        // 异步发送数据到webhook和Google Form（不阻塞用户体验）
+        ctx.waitUntil(Promise.all([
+          sendToWebhook(selectedLabels, env),
+          submitToGoogleForm(selectedLabels, selectedTags, env)
+        ]));
 
         // AI润色处理提示词
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
@@ -125,4 +128,127 @@ async function sendToWebhook(selectedLabels, env) {
     console.error('Webhook发送失败:', error);
     // 可以记录到其他地方或发送告警
   }
+}
+
+// 提交数据到Google Form
+async function submitToGoogleForm(selectedLabels, selectedTags, env) {
+  try {
+    // 检查是否配置了Google Form URL
+    if (!env.GOOGLE_FORM_URL) {
+      console.log('Google Form URL未配置，跳过提交');
+      return;
+    }
+
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+    
+    // 准备表单数据
+    const formData = new FormData();
+    
+    // 根据你的Google Form字段名称来设置这些entry值
+    // 你需要替换这些entry ID为你实际的Google Form字段ID
+    formData.append('entry.218313468', beijingTime.toISOString()); // 时间戳字段
+    formData.append('entry.1273374526', selectedLabels.join(', ')); // 选中标签字段
+    formData.append('entry.1493587175', selectedTags.join('，')); // 评价文本字段
+    formData.append('entry.89095521', beijingTime.toISOString().split('T')[0]); // 日期字段
+    formData.append('entry.1356066148', beijingTime.toTimeString().split(' ')[0]); // 时间字段
+    
+    // 添加分类统计
+    const categories = categorizeLabels(selectedLabels);
+    formData.append('entry.742681247', categories.environment.join(', ')); // 环境评价
+    formData.append('entry.1774805571', categories.taste.join(', ')); // 口味评价
+    formData.append('entry.1751902647', categories.service.join(', ')); // 服务评价
+    formData.append('entry.1079371495', categories.price.join(', ')); // 价格评价
+    formData.append('entry.782192759', categories.overall.join(', ')); // 综合评价
+
+    // 提交到Google Form
+    const response = await fetch(env.GOOGLE_FORM_URL, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'User-Agent': 'DianpingAgent/1.0'
+      }
+    });
+
+    if (response.ok) {
+      console.log('Google Form提交成功');
+    } else {
+      console.error('Google Form提交失败:', response.status, response.statusText);
+    }
+
+  } catch (error) {
+    console.error('Google Form提交出错:', error);
+    // 不抛出错误，避免影响主要功能
+  }
+}
+
+// 将标签按类别分组
+function categorizeLabels(selectedLabels) {
+  const categories = {
+    environment: [],
+    taste: [],
+    service: [],
+    price: [],
+    overall: []
+  };
+
+  // 定义各类别的标签映射
+  const labelCategories = {
+    // 环境相关
+    '环境舒适': 'environment',
+    '装修特色': 'environment',
+    '很接地气': 'environment',
+    '位置便利': 'environment',
+    '干净整洁': 'environment',
+    '环境一般': 'environment',
+    '装修老旧': 'environment',
+    '环境嘈杂': 'environment',
+    
+    // 口味相关
+    '味道正宗': 'taste',
+    '口感不错': 'taste',
+    '分量很足': 'taste',
+    '创新独特': 'taste',
+    '口味中规': 'taste',
+    '有点辣了': 'taste',
+    '分量适中': 'taste',
+    '分量偏少': 'taste',
+    
+    // 服务相关
+    '服务周到': 'service',
+    '上菜很快': 'service',
+    '态度很好': 'service',
+    '老板亲切': 'service',
+    '主动推荐': 'service',
+    '服务一般': 'service',
+    '上菜略慢': 'service',
+    '态度冷淡': 'service',
+    
+    // 价格相关
+    '价格实惠': 'price',
+    '性价比高': 'price',
+    '价位适中': 'price',
+    '有点小贵': 'price',
+    '性价比低': 'price',
+    
+    // 综合相关
+    '总体满意': 'overall',
+    '值得推荐': 'overall',
+    '附近最好': 'overall',
+    '下次再来': 'overall',
+    '超出预期': 'overall',
+    '体验还行': 'overall',
+    '可以尝试': 'overall',
+    '有待提高': 'overall'
+  };
+
+  // 将标签分配到对应类别
+  selectedLabels.forEach(label => {
+    const category = labelCategories[label];
+    if (category && categories[category]) {
+      categories[category].push(label);
+    }
+  });
+
+  return categories;
 }
