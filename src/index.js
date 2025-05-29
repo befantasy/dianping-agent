@@ -1,3 +1,26 @@
+// 追加数据到Google Sheets
+async function appendToGoogleSheet(env, spreadsheetId, sheetName, apiKey, values) {
+  // Construct the API URL for appending values
+  // The range ${sheetName} means it will append to the first empty row of the specified sheet.
+  const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:append?valueInputOption=USER_ENTERED&key=${apiKey}`;
+
+  // Prepare the request body
+  const body = {
+    majorDimension: 'ROWS',
+    values: values, // values should be an array of arrays, e.g., [["timestamp1", "tag1"], ["timestamp2", "tag2"]]
+  };
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const responseData = await response.json();
+
 export default {
   async fetch(request, env, ctx) {
     // 处理 CORS 预检请求
@@ -6,7 +29,7 @@ export default {
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Headers': 'Content-Type, X-Selected-Tags', // Allow custom header if you pass tags this way
         },
       });
     }
@@ -14,7 +37,19 @@ export default {
     // 处理 API 请求
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/polish-review') {
       try {
-        const { text } = await request.json(); // 获取前端获取的text
+        // 获取前端提交的text和selectedTags
+        // 确保selectedTags为数组
+        const { text, selectedTags } = await request.json();
+
+        if (!text) {
+          return new Response(JSON.stringify({ error: 'Missing "text" in request body' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            }
+          });
+        }
 
         // 提示词
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
@@ -33,7 +68,7 @@ export default {
 请直接返回润色后的点评内容，不需要其他说明。`;
 
         // 调用 Cloudflare Workers AI
-        const aiResponse = await env.AI.run('@cf/google/gemma-3-12b-it', {
+        const aiResponsePromise = env.AI.run('@cf/google/gemma-3-12b-it', {
           messages: [
             {
               role: 'system',
@@ -48,7 +83,33 @@ export default {
           temperature: 0.9
         });
 
-        return new Response(JSON.stringify(aiResponse), { // 返回 AI 的完整响应
+        // Process Google Sheets update if selectedTags are provided
+        if (env.GOOGLE_SHEETS_API_KEY && env.SPREADSHEET_ID && env.SHEET_NAME && Array.isArray(selectedTags) && selectedTags.length > 0) {
+          const timestamp = new Date().toISOString();
+          const rowsToAppend = selectedTags.map(tag => [timestamp, tag]); // Each tag gets its own row with the same timestamp
+
+          // Use ctx.waitUntil to perform the action without blocking the response
+          ctx.waitUntil(
+            appendToGoogleSheet(
+              env,
+              env.SPREADSHEET_ID,
+              env.SHEET_NAME,
+              env.GOOGLE_SHEETS_API_KEY,
+              rowsToAppend
+            )
+          );
+        } else {
+          if (!env.GOOGLE_SHEETS_API_KEY || !env.SPREADSHEET_ID || !env.SHEET_NAME) {
+            console.warn('Google Sheets environment variables (GOOGLE_SHEETS_API_KEY, SPREADSHEET_ID, SHEET_NAME) are not configured. Skipping sheet update.');
+          }
+          if (!Array.isArray(selectedTags) || selectedTags.length === 0) {
+            console.log('No selectedTags provided or tags array is empty. Skipping sheet update.');
+          }
+        }
+        
+        const aiResponse = await aiResponsePromise;
+
+        return new Response(JSON.stringify(aiResponse), {
           headers: {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -56,9 +117,9 @@ export default {
         });
 
       } catch (error) {
-        console.error('AI处理错误:', error);
+        console.error('处理错误:', error.message, error.stack);
         return new Response(JSON.stringify({
-          error: 'AI服务暂时不可用',
+          error: '服务暂时不可用',
           details: error.message
         }), {
           status: 500,
