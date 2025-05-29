@@ -1,5 +1,5 @@
 name = "dianping-agent"
-compatibility_date = "2025-05-01"
+compatibility_date = "2025-05-29"
 
 [vars]
 # 你可以在这里添加自定义环境变量
