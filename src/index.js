@@ -1,68 +1,25 @@
-// Helper function to append data to Google Sheets
-async function appendToGoogleSheet(env, spreadsheetId, sheetName, apiKey, values) {
-  // Construct the API URL for appending values
-  // The range ${sheetName} means it will append to the first empty row of the specified sheet.
-  const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:append?valueInputOption=USER_ENTERED&key=${apiKey}`;
-
-  // Prepare the request body
-  const body = {
-    majorDimension: 'ROWS',
-    values: values, // values should be an array of arrays, e.g., [["timestamp1", "tag1"], ["timestamp2", "tag2"]]
-  };
-
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
-      console.error('Google Sheets API Error:', responseData.error ? responseData.error.message : 'Unknown error', 'Status:', response.status);
-      // You might want to add more robust error logging or retry mechanisms here
-    } else {
-      console.log('Data successfully appended to Google Sheet:', responseData.updates.updatedRange);
-    }
-  } catch (error) {
-    console.error('Error appending to Google Sheet:', error.message, error.stack);
-  }
-}
-
 export default {
   async fetch(request, env, ctx) {
-    // Handle CORS preflight request
+    // 处理 CORS 预检请求
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, X-Selected-Tags', // Allow custom header if you pass tags this way
+          'Access-Control-Allow-Headers': 'Content-Type',
         },
       });
     }
 
-    // Handle API request for polishing review
+    // 处理 API 请求
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/polish-review') {
       try {
-        // Get text and selectedTags from the request body
-        // Ensure your frontend sends `selectedTags` as an array of strings
-        const { text, selectedTags } = await request.json();
+        const { text, selectedTags } = await request.json(); // 获取前端提交的text和selectedTags数组
 
-        if (!text) {
-          return new Response(JSON.stringify({ error: 'Missing "text" in request body' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-            }
-          });
-        }
+        // 异步发送数据到webhook（不阻塞用户体验）
+        ctx.waitUntil(sendToWebhook(selectedTags, env));
 
-        // Your existing prompt for the AI
+        // AI润色处理提示词
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
 1. 语言自然亲切，以顾客的视角分享用餐体验，适合发布在点评网站上。
 2. 保持原有信息的准确性，包括正面、中性和负面评价。
@@ -78,8 +35,8 @@ export default {
 
 请直接返回润色后的点评内容，不需要其他说明。`;
 
-        // Call Cloudflare Workers AI
-        const aiResponsePromise = env.AI.run('@cf/google/gemma-3-12b-it', {
+        // 调用 Cloudflare Workers AI
+        const aiResponse = await env.AI.run('@cf/google/gemma-3-12b-it', {
           messages: [
             {
               role: 'system',
@@ -87,40 +44,14 @@ export default {
             },
             {
               role: 'user',
-              content: prompt
+              content: prompt // 使用后端定义的 prompt
             }
           ],
           max_tokens: 400,
           temperature: 0.9
         });
 
-        // Process Google Sheets update if selectedTags are provided
-        if (env.GOOGLE_SHEETS_API_KEY && env.SPREADSHEET_ID && env.SHEET_NAME && Array.isArray(selectedTags) && selectedTags.length > 0) {
-          const timestamp = new Date().toISOString();
-          const rowsToAppend = selectedTags.map(tag => [timestamp, tag]); // Each tag gets its own row with the same timestamp
-
-          // Use ctx.waitUntil to perform the action without blocking the response
-          ctx.waitUntil(
-            appendToGoogleSheet(
-              env,
-              env.SPREADSHEET_ID,
-              env.SHEET_NAME,
-              env.GOOGLE_SHEETS_API_KEY,
-              rowsToAppend
-            )
-          );
-        } else {
-          if (!env.GOOGLE_SHEETS_API_KEY || !env.SPREADSHEET_ID || !env.SHEET_NAME) {
-            console.warn('Google Sheets environment variables (GOOGLE_SHEETS_API_KEY, SPREADSHEET_ID, SHEET_NAME) are not configured. Skipping sheet update.');
-          }
-          if (!Array.isArray(selectedTags) || selectedTags.length === 0) {
-            console.log('No selectedTags provided or tags array is empty. Skipping sheet update.');
-          }
-        }
-        
-        const aiResponse = await aiResponsePromise;
-
-        return new Response(JSON.stringify(aiResponse), {
+        return new Response(JSON.stringify(aiResponse), { // 返回 AI 的完整响应
           headers: {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -128,9 +59,9 @@ export default {
         });
 
       } catch (error) {
-        console.error('AI处理或主逻辑错误:', error.message, error.stack);
+        console.error('处理错误:', error);
         return new Response(JSON.stringify({
-          error: '服务暂时不可用',
+          error: 'AI服务暂时不可用',
           details: error.message
         }), {
           status: 500,
@@ -142,14 +73,56 @@ export default {
       }
     }
 
-    // If it's the root path, return a simple message
     if (new URL(request.url).pathname === '/') {
-      return new Response('Worker is running and ready to polish reviews and log tags to Google Sheets.', {
+      return new Response('Worker is running', {
         headers: { 'Content-Type': 'text/plain' }
       });
     }
 
-    // Return Not Found for other paths
     return new Response('Not Found', { status: 404 });
   }
 };
+
+// 发送数据到Webhook
+async function sendToWebhook(selectedTags, env) {
+  try {
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+    
+    const payload = {
+      timestamp: beijingTime.toISOString(),
+      date: beijingTime.toISOString().split('T')[0],
+      time: beijingTime.toTimeString().split(' ')[0],
+      selectedTags: selectedTags,
+      tagsString: selectedTags.join(', '),
+      // 可以添加更多元数据
+      source: 'dianping-agent',
+      version: '1.0'
+    };
+
+    // 发送到主webhook
+    await fetch(env.WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'DianpingAgent/1.0'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    // 如果配置了备用webhook，也发送一份
+    if (env.BACKUP_WEBHOOK_URL) {
+      await fetch(env.BACKUP_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+
+  } catch (error) {
+    console.error('Webhook发送失败:', error);
+    // 可以记录到其他地方或发送告警
+  }
+}
