@@ -95,7 +95,6 @@ async function sendToWebhook(selectedLabels, env) {
       date: beijingTime.toISOString().split('T')[0],
       time: beijingTime.toTimeString().split(' ')[0],
       selectedLabels: selectedLabels,
-      tagsString: selectedLabels.join(', '),
       // 可以添加更多元数据
       source: 'dianping-agent',
       version: '1.0'
