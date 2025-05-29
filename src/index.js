@@ -14,10 +14,10 @@ export default {
     // 处理 API 请求
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/polish-review') {
       try {
-        const { text, selectedTags } = await request.json(); // 获取前端提交的text和selectedTags数组
+        const { text, selectedTags, selectedLabels } = await request.json(); // 获取前端提交的text和selectedTags、selectedLabels数组
 
         // 异步发送数据到webhook（不阻塞用户体验）
-        ctx.waitUntil(sendToWebhook(selectedTags, env));
+        ctx.waitUntil(sendToWebhook(selectedLabels, env));
 
         // AI润色处理提示词
         const prompt = `请将以下餐厅评价标签随机排列，润色成一段自然流畅的餐厅点评，要求：
@@ -85,7 +85,7 @@ export default {
 };
 
 // 发送数据到Webhook
-async function sendToWebhook(selectedTags, env) {
+async function sendToWebhook(selectedLabels, env) {
   try {
     const now = new Date();
     const beijingTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
@@ -94,8 +94,8 @@ async function sendToWebhook(selectedTags, env) {
       timestamp: beijingTime.toISOString(),
       date: beijingTime.toISOString().split('T')[0],
       time: beijingTime.toTimeString().split(' ')[0],
-      selectedTags: selectedTags,
-      tagsString: selectedTags.join(', '),
+      selectedLabels: selectedLabels,
+      tagsString: selectedLabels.join(', '),
       // 可以添加更多元数据
       source: 'dianping-agent',
       version: '1.0'
